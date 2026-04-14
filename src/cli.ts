@@ -27,7 +27,8 @@ function prompt(): void {
       });
 
       console.log(`\n${fixMarkdownLinks(response.text)}`);
-      console.log(`\n--- ${(response.durationMs / 1000).toFixed(1)}s | tools: ${response.toolsUsed.map(t => prettifyToolName(t.tool)).join(", ") || "none"} ---`);
+      const uniqueTools = [...new Set(response.toolsUsed.map(t => prettifyToolName(t.tool)))];
+      console.log(`\n--- ${(response.durationMs / 1000).toFixed(1)}s | tools: ${uniqueTools.join(", ") || "none"} ---`);
     } catch (err) {
       console.error("\n🤕 Error:", (err as Error).message);
     }
@@ -36,9 +37,20 @@ function prompt(): void {
   });
 }
 
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  bash: "Bash",
+  read_file: "Read",
+  write_file: "Write",
+  edit_file: "Edit",
+  grep: "Grep",
+  glob: "Glob",
+  web_search: "WebSearch",
+  web_fetch: "WebFetch",
+  get_weather: "Weather",
+};
+
 function prettifyToolName(raw: string): string {
-  const first = raw.charAt(0).toUpperCase() + raw.slice(1);
-  return first;
+  return TOOL_DISPLAY_NAMES[raw] ?? raw;
 }
 
 function formatToolSummary(tool: string, input: Record<string, unknown>): string {

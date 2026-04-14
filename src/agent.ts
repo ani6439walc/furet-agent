@@ -2,18 +2,21 @@ import OpenAI from "openai";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { logger } from "./logger.js";
+import { loadConfig } from "./config.js";
 import { bashDefinition, executeBash } from "./tools/builtin/bash.js";
 import { readFileDefinition, executeReadFile } from "./tools/builtin/read-file.js";
 import { writeFileDefinition, executeWriteFile } from "./tools/builtin/write-file.js";
 import { webSearchDefinition, executeWebSearch } from "./tools/builtin/web-search.js";
-import "dotenv/config";
+import { weatherDefinition, executeWeather } from "./tools/builtin/weather.js";
+
+const config = loadConfig();
 
 const client = new OpenAI({
-  apiKey: process.env.LLM_API_KEY,
-  baseURL: process.env.LLM_BASE_URL,
+  apiKey: config.llm.api_key,
+  baseURL: config.llm.base_url,
 });
 
-const MODEL = process.env.LLM_MODEL ?? "claude-sonnet-4-20250514";
+const MODEL = config.llm.model;
 
 export interface ToolActivity {
   tool: string;
@@ -71,6 +74,7 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
   readFileDefinition,
   writeFileDefinition,
   webSearchDefinition,
+  weatherDefinition,
 ];
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -79,6 +83,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     case "read_file": return executeReadFile(args as { path: string });
     case "write_file": return executeWriteFile(args as { path: string; content: string });
     case "web_search": return executeWebSearch(args as { query: string });
+    case "get_weather": return executeWeather(args as { city: string; lang?: string });
     default: return `Unknown tool: ${name}`;
   }
 }
