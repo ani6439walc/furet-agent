@@ -32,6 +32,7 @@ export interface AgentResponse {
 export interface AgentOptions {
   systemPrompt?: string;
   maxTurns?: number;
+  session?: import("./session.js").Session;
   onToolUse?: (tool: string, input: Record<string, unknown>) => void;
 }
 
@@ -67,7 +68,8 @@ function loadPersona(): string {
 }
 
 function buildSystemPrompt(extra?: string): string {
-  return [SYSTEM_INSTRUCTIONS, loadPersona(), extra].filter(Boolean).join("\n");
+  const date = `Current date: ${new Date().toISOString().split("T")[0]}`;
+  return [SYSTEM_INSTRUCTIONS, date, loadPersona(), extra].filter(Boolean).join("\n");
 }
 
 const TOOLS: OpenAI.ChatCompletionTool[] = [
@@ -96,10 +98,17 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
 
   logger.info({ prompt: prompt.slice(0, 200) }, "query start");
 
+  const session = options.session;
+
+  // 組 messages：system prompt + 歷史對話 + 新的 user 訊息
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: buildSystemPrompt(options.systemPrompt) },
+    ...(session ? session.getMessages() : []),
     { role: "user", content: prompt },
   ];
+
+  // 把 user 訊息存進 session
+  session?.append({ role: "user", content: prompt });
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await client.chat.completions.create({
@@ -116,6 +125,7 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
 
     // 沒有 tool call → 回文字，結束
     if (!message.tool_calls || message.tool_calls.length === 0) {
+      session?.append({ role: "assistant", content: message.content ?? "" });
       const durationMs = Date.now() - startTime;
       logger.info({ durationMs, toolsUsed: toolsUsed.map(t => t.tool) }, "query done");
       return {
@@ -126,6 +136,9 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
     }
 
     // 有 tool call → 執行每個 tool，結果加回 messages
+    // assistant 的 tool_call message 和 tool result 都存進 session
+    session?.append(message as OpenAI.ChatCompletionMessageParam);
+
     for (const toolCall of message.tool_calls) {
       if (toolCall.type !== "function") continue;
       const toolName = toolCall.function.name;
@@ -138,11 +151,13 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
       const result = await executeTool(toolName, toolArgs);
       logger.debug({ tool: toolName, result: result.slice(0, 500) }, "tool result");
 
-      messages.push({
+      const toolResultMsg: OpenAI.ChatCompletionMessageParam = {
         role: "tool",
         tool_call_id: toolCall.id,
         content: result,
-      });
+      };
+      messages.push(toolResultMsg);
+      session?.append(toolResultMsg);
     }
   }
 

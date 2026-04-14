@@ -1,6 +1,11 @@
 import * as readline from "node:readline";
+import { resolve } from "node:path";
 import { ask } from "./agent.js";
+import { Session } from "./session.js";
 import { fixMarkdownLinks } from "./utils/format.js";
+
+const SESSION_PATH = resolve(import.meta.dirname ?? process.cwd(), "..", "workspace", "sessions", "cli.json");
+let session = new Session(SESSION_PATH);
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -17,8 +22,16 @@ function prompt(): void {
       return;
     }
 
+    if (trimmed === "new") {
+      session.clear();
+      console.log("new session started");
+      prompt();
+      return;
+    }
+
     try {
       const response = await ask(trimmed, {
+        session,
         onToolUse: (tool, toolInput) => {
           const displayName = prettifyToolName(tool);
           const summary = formatToolSummary(tool, toolInput);
@@ -82,5 +95,5 @@ function truncate(str: string, max: number): string {
   return str.length > max ? str.slice(0, max) + "..." : str;
 }
 
-console.log("Furet CLI — type 'exit' to quit");
+console.log(`Furet CLI — type 'new' for new session, 'exit' to quit (history: ${session.length} messages)`);
 prompt();
