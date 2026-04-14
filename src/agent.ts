@@ -14,6 +14,12 @@ import {
   memoryListDefinition, executeMemoryList,
   memoryUpdateIndexDefinition, executeMemoryUpdateIndex,
 } from "./tools/builtin/memory.js";
+import {
+  cronCreateDefinition, executeCronCreate,
+  cronListDefinition, executeCronList,
+  cronDeleteDefinition, executeCronDelete,
+  cronToggleDefinition, executeCronToggle,
+} from "./tools/builtin/cron.js";
 
 const config = loadConfig();
 
@@ -98,6 +104,10 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
   memorySearchDefinition,
   memoryListDefinition,
   memoryUpdateIndexDefinition,
+  cronCreateDefinition,
+  cronListDefinition,
+  cronDeleteDefinition,
+  cronToggleDefinition,
 ];
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -111,6 +121,10 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     case "memory_search": return executeMemorySearch(args as { query: string });
     case "memory_list": return executeMemoryList();
     case "memory_update_index": return executeMemoryUpdateIndex(args as { content: string });
+    case "cron_create": return executeCronCreate(args as { name: string; schedule: string; prompt: string });
+    case "cron_list": return executeCronList();
+    case "cron_delete": return executeCronDelete(args as { id: string });
+    case "cron_toggle": return executeCronToggle(args as { id: string; enabled: boolean });
     default: return `Unknown tool: ${name}`;
   }
 }

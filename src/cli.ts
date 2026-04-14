@@ -62,6 +62,10 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   memory_search: "MemorySearch",
   memory_list: "MemoryList",
   memory_update_index: "MemoryIndex",
+  cron_create: "CronCreate",
+  cron_list: "CronList",
+  cron_delete: "CronDelete",
+  cron_toggle: "CronToggle",
 };
 
 function prettifyToolName(raw: string): string {
