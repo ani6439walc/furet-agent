@@ -1,11 +1,9 @@
 import * as readline from "node:readline";
-import { resolve } from "node:path";
 import { ask } from "./agent.js";
 import { Session } from "./session.js";
 import { fixMarkdownLinks } from "./utils/format.js";
 
-const SESSION_PATH = resolve(import.meta.dirname ?? process.cwd(), "..", "workspace", "sessions", "cli.json");
-let session = new Session(SESSION_PATH);
+let session = new Session("cli");
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -60,6 +58,10 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   web_search: "WebSearch",
   web_fetch: "WebFetch",
   get_weather: "Weather",
+  memory_save: "MemorySave",
+  memory_search: "MemorySearch",
+  memory_list: "MemoryList",
+  memory_update_index: "MemoryIndex",
 };
 
 function prettifyToolName(raw: string): string {

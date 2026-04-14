@@ -8,6 +8,12 @@ import { readFileDefinition, executeReadFile } from "./tools/builtin/read-file.j
 import { writeFileDefinition, executeWriteFile } from "./tools/builtin/write-file.js";
 import { webSearchDefinition, executeWebSearch } from "./tools/builtin/web-search.js";
 import { weatherDefinition, executeWeather } from "./tools/builtin/weather.js";
+import {
+  memorySaveDefinition, executeMemorySave,
+  memorySearchDefinition, executeMemorySearch,
+  memoryListDefinition, executeMemoryList,
+  memoryUpdateIndexDefinition, executeMemoryUpdateIndex,
+} from "./tools/builtin/memory.js";
 
 const config = loadConfig();
 
@@ -53,15 +59,22 @@ You are Furet, a personal assistant agent.
   - To search file content: use grep, NOT bash grep
 - Reserve bash exclusively for shell commands that have no dedicated tool (git, curl, npm, etc.)
 
+## Memory
+- You have a memory system. Use it proactively to remember important facts about the user.
+- Save memories when you learn: user preferences, personal info, decisions, recurring topics, corrections.
+- memory_save: appends to today's file (workspace/memory/yyyy-MM-dd.md). Use for daily observations.
+- memory_update_index: overwrites MEMORY.md. Use for persistent, important facts that should be available in every conversation. Keep it concise.
+- memory_search: search past memories when context might help.
+- Do NOT mention that you're saving a memory unless the user asks. Just do it silently.
+
 ## Tone and style
 - Be short and concise.
 - Only use emojis if the user uses them first.
 `;
 
-function loadPersona(): string {
+function loadFile(name: string): string {
   try {
-    const personaPath = resolve(import.meta.dirname ?? process.cwd(), "..", "workspace", "FURET.md");
-    return readFileSync(personaPath, "utf-8");
+    return readFileSync(resolve(import.meta.dirname ?? process.cwd(), "..", "workspace", name), "utf-8");
   } catch {
     return "";
   }
@@ -69,7 +82,10 @@ function loadPersona(): string {
 
 function buildSystemPrompt(extra?: string): string {
   const date = `Current date: ${new Date().toISOString().split("T")[0]}`;
-  return [SYSTEM_INSTRUCTIONS, date, loadPersona(), extra].filter(Boolean).join("\n");
+  const persona = loadFile("FURET.md");
+  const memory = loadFile("MEMORY.md");
+  const memorySection = memory ? `\n## Long-term Memory\n${memory}` : "";
+  return [SYSTEM_INSTRUCTIONS, date, persona, memorySection, extra].filter(Boolean).join("\n");
 }
 
 const TOOLS: OpenAI.ChatCompletionTool[] = [
@@ -78,6 +94,10 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
   writeFileDefinition,
   webSearchDefinition,
   weatherDefinition,
+  memorySaveDefinition,
+  memorySearchDefinition,
+  memoryListDefinition,
+  memoryUpdateIndexDefinition,
 ];
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -87,6 +107,10 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     case "write_file": return executeWriteFile(args as { path: string; content: string });
     case "web_search": return executeWebSearch(args as { query: string });
     case "get_weather": return executeWeather(args as { city: string; lang?: string });
+    case "memory_save": return executeMemorySave(args as { content: string });
+    case "memory_search": return executeMemorySearch(args as { query: string });
+    case "memory_list": return executeMemoryList();
+    case "memory_update_index": return executeMemoryUpdateIndex(args as { content: string });
     default: return `Unknown tool: ${name}`;
   }
 }
