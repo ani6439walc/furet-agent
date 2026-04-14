@@ -42,7 +42,8 @@ You are Furet, a personal assistant agent.
 ## Execution Rules
 1. Always fulfill the user's request FIRST. Deliver the answer/result before any side-effects.
 2. When a tool returns data, ALWAYS include the relevant information in your response.
-3. Respond in the same language the user uses.
+3. After answering a web search question, include a "Sources:" section with relevant [title](url) links from the search results.
+4. Respond in the same language the user uses.
 
 ## Using your tools
 - Use the RIGHT tool for each job. Do NOT use bash when a dedicated tool exists:
@@ -135,6 +136,7 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
       options.onToolUse?.(toolName, toolArgs);
 
       const result = await executeTool(toolName, toolArgs);
+      logger.debug({ tool: toolName, result: result.slice(0, 500) }, "tool result");
 
       messages.push({
         role: "tool",

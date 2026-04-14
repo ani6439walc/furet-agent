@@ -96,14 +96,24 @@ async function searchDuckDuckGo(query: string): Promise<string> {
     let match;
     let count = 0;
     while ((match = regex.exec(html)) !== null && count < 8) {
-      const href = match[1];
+      const rawHref = match[1];
       const title = match[2].replace(/<[^>]+>/g, "").trim();
       const snippet = match[3].replace(/<[^>]+>/g, "").trim();
-      results.push(`- [${title}](${href})\n  ${snippet}`);
+
+      // DDG href 是重定向連結，提取真正的 URL
+      let href = rawHref;
+      const uddgMatch = rawHref.match(/uddg=([^&]+)/);
+      if (uddgMatch) {
+        href = decodeURIComponent(uddgMatch[1]);
+      }
+
+      results.push(`[${title}](${href})\n${snippet}`);
       count++;
     }
 
-    return results.length > 0 ? results.join("\n\n") : "No results found.";
+    if (results.length === 0) return "No results found.";
+
+    return "Search results:\n\n" + results.join("\n\n");
   } catch (err) {
     logger.error({ err }, "duckduckgo search error");
     return `Search error: ${(err as Error).message}`;
