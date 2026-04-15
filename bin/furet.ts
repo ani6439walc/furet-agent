@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S npx tsx
 import { resolve } from "node:path";
 
 const command = process.argv[2];

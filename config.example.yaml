@@ -13,3 +13,15 @@ web_search:
   # searxng_url: "${SEARXNG_URL}"       # e.g. http://localhost:8888
 
   # duckduckgo: no config needed
+
+discord:
+  enabled: false                        # set true to run discord bot
+  token: "${DISCORD_TOKEN}"             # bot token from Discord Developer Portal
+  allowed_channels: []                  # empty = all channels; specify channel IDs to restrict
+  allowed_guilds: []                    # empty = all servers; specify guild IDs to restrict
+  owner_id: ""                          # your Discord user ID (only owner can DM the bot)
+
+journal:
+  enabled: false                        # auto-write a daily journal at scheduled time
+  hour: 22                              # 0-23
+  minute: 0                             # 0-59

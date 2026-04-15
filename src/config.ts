@@ -14,6 +14,18 @@ export interface FuretConfig {
     google_api_key: string;
     searxng_url: string;
   };
+  discord: {
+    enabled: boolean;
+    token: string;
+    allowed_channels: string[];
+    allowed_guilds: string[];
+    owner_id: string;
+  };
+  journal: {
+    enabled: boolean;
+    hour: number;              // 0-23
+    minute: number;            // 0-59
+  };
 }
 
 const DEFAULTS: FuretConfig = {
@@ -26,6 +38,18 @@ const DEFAULTS: FuretConfig = {
     provider: "duckduckgo",
     google_api_key: "",
     searxng_url: "",
+  },
+  discord: {
+    enabled: false,
+    token: "",
+    allowed_channels: [],
+    allowed_guilds: [],
+    owner_id: "",
+  },
+  journal: {
+    enabled: false,
+    hour: 22,
+    minute: 0,
   },
 };
 
@@ -69,7 +93,9 @@ export function loadConfig(): FuretConfig {
   cached = {
     llm: { ...DEFAULTS.llm, ...(resolved.llm as Record<string, unknown>) } as FuretConfig["llm"],
     web_search: { ...DEFAULTS.web_search, ...(resolved.web_search as Record<string, unknown>) } as FuretConfig["web_search"],
+    discord: { ...DEFAULTS.discord, ...(resolved.discord as Record<string, unknown>) } as FuretConfig["discord"],
+    journal: { ...DEFAULTS.journal, ...(resolved.journal as Record<string, unknown>) } as FuretConfig["journal"],
   };
 
-  return cached;
+  return cached!;
 }

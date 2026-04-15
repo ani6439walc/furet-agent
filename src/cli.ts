@@ -66,6 +66,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   cron_list: "CronList",
   cron_delete: "CronDelete",
   cron_toggle: "CronToggle",
+  reminder_create: "ReminderCreate",
+  reminder_list: "ReminderList",
+  reminder_delete: "ReminderDelete",
 };
 
 function prettifyToolName(raw: string): string {
