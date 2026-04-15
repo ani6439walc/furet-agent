@@ -20,6 +20,11 @@ import {
   cronDeleteDefinition, executeCronDelete,
   cronToggleDefinition, executeCronToggle,
 } from "./tools/builtin/cron.js";
+import {
+  reminderCreateDefinition, executeReminderCreate,
+  reminderListDefinition, executeReminderList,
+  reminderDeleteDefinition, executeReminderDelete,
+} from "./tools/builtin/reminder.js";
 
 const config = loadConfig();
 
@@ -53,10 +58,11 @@ const SYSTEM_INSTRUCTIONS = `
 You are Furet, a personal assistant agent.
 
 ## Execution Rules
-1. Always fulfill the user's request FIRST. Deliver the answer/result before any side-effects.
-2. When a tool returns data, ALWAYS include the relevant information in your response.
-3. After answering a web search question, include a "Sources:" section with relevant [title](url) links from the search results.
-4. Respond in the same language the user uses.
+1. ALWAYS produce a text response. After all tool calls are done, you MUST output text to reply to the user. Never end with only tool calls and no text.
+2. Always fulfill the user's request FIRST. Deliver the answer/result before any side-effects.
+3. When a tool returns data, ALWAYS include the relevant information in your response.
+4. After answering a web search question, include a "Sources:" section with relevant [title](url) links from the search results.
+5. Respond in the same language the user uses.
 
 ## Using your tools
 - Use the RIGHT tool for each job. Do NOT use bash when a dedicated tool exists:
@@ -66,12 +72,21 @@ You are Furet, a personal assistant agent.
 - Reserve bash exclusively for shell commands that have no dedicated tool (git, curl, npm, etc.)
 
 ## Memory
-- You have a memory system. Use it proactively to remember important facts about the user.
-- Save memories when you learn: user preferences, personal info, decisions, recurring topics, corrections.
-- memory_save: appends to today's file (workspace/memory/yyyy-MM-dd.md). Use for daily observations.
-- memory_update_index: overwrites MEMORY.md. Use for persistent, important facts that should be available in every conversation. Keep it concise.
+- You have a memory system. Use it sparingly. Most conversations do NOT need memory saved.
+- Save ONLY when you learn something genuinely useful for future conversations:
+  - User's personal facts (name, location, job, family, etc.)
+  - User's strong preferences or habits
+  - Important decisions or plans
+  - Corrections to your understanding
+- Do NOT save:
+  - Greetings, casual chat, jokes, emotions
+  - Trivial daily events ("user said hi", "user asked time")
+  - Information already in MEMORY.md or recent memory files
+  - Your own reasoning or observations about the conversation
+- memory_save: appends to today's file (workspace/memory/yyyy-MM-dd.md).
+- memory_update_index: overwrites MEMORY.md. For persistent important facts loaded every conversation. Keep it concise.
 - memory_search: search past memories when context might help.
-- Do NOT mention that you're saving a memory unless the user asks. Just do it silently.
+- Do NOT mention saving memory unless asked.
 
 ## Tone and style
 - Be short and concise.
@@ -108,6 +123,9 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
   cronListDefinition,
   cronDeleteDefinition,
   cronToggleDefinition,
+  reminderCreateDefinition,
+  reminderListDefinition,
+  reminderDeleteDefinition,
 ];
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -125,6 +143,9 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     case "cron_list": return executeCronList();
     case "cron_delete": return executeCronDelete(args as { id: string });
     case "cron_toggle": return executeCronToggle(args as { id: string; enabled: boolean });
+    case "reminder_create": return executeReminderCreate(args as { name: string; trigger_at: string; prompt: string });
+    case "reminder_list": return executeReminderList();
+    case "reminder_delete": return executeReminderDelete(args as { id: string });
     default: return `Unknown tool: ${name}`;
   }
 }
@@ -137,6 +158,7 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
   logger.info({ prompt: prompt.slice(0, 200) }, "query start");
 
   const session = options.session;
+  const collectedTexts: string[] = []; // 收集所有輪次的 text content
 
   // 組 messages：system prompt + 歷史對話 + 新的 user 訊息
   const messages: OpenAI.ChatCompletionMessageParam[] = [
@@ -158,16 +180,28 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
     const choice = response.choices[0];
     const message = choice.message;
 
+    logger.info({
+      turn,
+      finish_reason: choice.finish_reason,
+      contentLength: message.content?.length ?? 0,
+      contentPreview: message.content?.slice(0, 200),
+      toolCallCount: message.tool_calls?.length ?? 0,
+    }, "agent turn");
+
+    // 收集每輪的 text content（會跟 tool_calls 並存）
+    if (message.content) collectedTexts.push(message.content);
+
     // 把 assistant 回覆加進 messages（給下一輪用）
     messages.push(message);
 
-    // 沒有 tool call → 回文字，結束
+    // 沒有 tool call → 結束，回傳所有收集到的文字
     if (!message.tool_calls || message.tool_calls.length === 0) {
       session?.append({ role: "assistant", content: message.content ?? "" });
       const durationMs = Date.now() - startTime;
-      logger.info({ durationMs, toolsUsed: toolsUsed.map(t => t.tool) }, "query done");
+      const finalText = collectedTexts.join("\n\n");
+      logger.info({ durationMs, toolsUsed: toolsUsed.map(t => t.tool), textLength: finalText.length }, "query done");
       return {
-        text: message.content ?? "",
+        text: finalText,
         toolsUsed,
         durationMs,
       };
