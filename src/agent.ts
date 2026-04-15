@@ -25,6 +25,9 @@ import {
   reminderListDefinition, executeReminderList,
   reminderDeleteDefinition, executeReminderDelete,
 } from "./tools/builtin/reminder.js";
+import {
+  discordFetchMessageDefinition, executeDiscordFetchMessage,
+} from "./tools/builtin/discord.js";
 
 const config = loadConfig();
 
@@ -64,6 +67,11 @@ You are Furet, a personal assistant agent.
 4. After answering a web search question, include a "Sources:" section with relevant [title](url) links from the search results.
 5. Respond in the same language the user uses.
 
+## Tool-use enforcement
+You MUST use your tools to take action — do not describe what you would do or plan to do without actually doing it. When you say you will perform an action (e.g. "I will run the tests", "Let me check the file", "I will create the project"), you MUST immediately make the corresponding tool call in the same response. Never end your turn with a promise of future action — execute it now.
+Keep working until the task is actually complete. Do not stop with a summary of what you plan to do next time. If you have tools available that can accomplish the task, use them instead of telling the user what you would do.
+Every response should either (a) contain tool calls that make progress, or (b) deliver a final result to the user. Responses that only describe intentions without acting are not acceptable.
+
 ## Using your tools
 - Use the RIGHT tool for each job. Do NOT use bash when a dedicated tool exists:
   - To read files: use read_file, NOT cat/head/tail
@@ -83,14 +91,12 @@ You are Furet, a personal assistant agent.
   - Trivial daily events ("user said hi", "user asked time")
   - Information already in MEMORY.md or recent memory files
   - Your own reasoning or observations about the conversation
+- MEMORY.md is ALREADY loaded in your system prompt above. Do NOT memory_search for things already visible there.
 - memory_save: appends to today's file (workspace/memory/yyyy-MM-dd.md).
 - memory_update_index: overwrites MEMORY.md. For persistent important facts loaded every conversation. Keep it concise.
-- memory_search: search past memories when context might help.
+- memory_search: ONLY for searching past daily memory files (not MEMORY.md). Use when the user refers to something from previous days.
 - Do NOT mention saving memory unless asked.
 
-## Tone and style
-- Be short and concise.
-- Only use emojis if the user uses them first.
 `;
 
 function loadFile(name: string): string {
@@ -126,6 +132,7 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
   reminderCreateDefinition,
   reminderListDefinition,
   reminderDeleteDefinition,
+  discordFetchMessageDefinition,
 ];
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -146,29 +153,30 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     case "reminder_create": return executeReminderCreate(args as { name: string; trigger_at: string; prompt: string });
     case "reminder_list": return executeReminderList();
     case "reminder_delete": return executeReminderDelete(args as { id: string });
+    case "discord_fetch_message": return executeDiscordFetchMessage(args as { channel_id: string; message_id: string });
     default: return `Unknown tool: ${name}`;
   }
 }
 
-export async function ask(prompt: string, options: AgentOptions = {}): Promise<AgentResponse> {
+export async function ask(prompt: string | null, options: AgentOptions = {}): Promise<AgentResponse> {
   const startTime = Date.now();
   const maxTurns = options.maxTurns ?? 10;
   const toolsUsed: ToolActivity[] = [];
 
-  logger.info({ prompt: prompt.slice(0, 200) }, "query start");
+  logger.info({ prompt: prompt?.slice(0, 200) ?? "(no new prompt, using session tail)" }, "query start");
 
   const session = options.session;
-  const collectedTexts: string[] = []; // 收集所有輪次的 text content
+  const collectedTexts: string[] = [];
 
-  // 組 messages：system prompt + 歷史對話 + 新的 user 訊息
+  // 若有新 prompt，先 append 進 session；沒有就直接用 session 當前內容
+  if (prompt !== null) session?.append({ role: "user", content: prompt });
+
+  const sessionMessages = session?.getMessages() ?? [];
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: buildSystemPrompt(options.systemPrompt) },
-    ...(session ? session.getMessages() : []),
-    { role: "user", content: prompt },
+    ...sessionMessages,
+    ...(prompt !== null && !session ? [{ role: "user" as const, content: prompt }] : []),
   ];
-
-  // 把 user 訊息存進 session
-  session?.append({ role: "user", content: prompt });
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await client.chat.completions.create({
@@ -208,8 +216,8 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
     }
 
     // 有 tool call → 執行每個 tool，結果加回 messages
-    // assistant 的 tool_call message 和 tool result 都存進 session
-    session?.append(message as OpenAI.ChatCompletionMessageParam);
+    // 先執行所有 tool，收集結果，最後一次存進 session（原子性：避免中斷留下孤立 tool_use）
+    const toolResultMessages: OpenAI.ChatCompletionMessageParam[] = [];
 
     for (const toolCall of message.tool_calls) {
       if (toolCall.type !== "function") continue;
@@ -229,7 +237,13 @@ export async function ask(prompt: string, options: AgentOptions = {}): Promise<A
         content: result,
       };
       messages.push(toolResultMsg);
-      session?.append(toolResultMsg);
+      toolResultMessages.push(toolResultMsg);
+    }
+
+    // 原子性存入：assistant message（含 tool_use）+ 所有 tool results
+    if (session) {
+      session.append(message as OpenAI.ChatCompletionMessageParam);
+      for (const r of toolResultMessages) session.append(r);
     }
   }
 
