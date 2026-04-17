@@ -63,16 +63,24 @@ export async function startBot(token: string): Promise<void> {
         ? `discord-channel-${interaction.channelId}`
         : `discord-dm-${interaction.user.id}`;
       const session = new Session(sessionId);
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const channelContext = `Current Discord channel ID: ${interaction.channelId}`;
+      const ts = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(5, 16).replace("-", "/");
+
+      // 歸檔前：讓 agent 總結當前 session 存進記憶
+      if (session.length > 0) {
+        const summarizePrompt = `The user is about to clear this session with /new. Review the conversation above and save a concise summary of important context to memory (memory_save) — ongoing tasks, decisions, topics being discussed, anything the user might need continuity on. Do NOT produce any text output, only save memory.`;
+        session.append({ role: "user", content: summarizePrompt, time: ts });
+        await ask(null, { session, systemPrompt: channelContext }).catch(err =>
+          logger.error({ err: (err as Error).message }, "session summarize before /new failed")
+        );
+      }
+
       session.archive();
       logger.info({ sessionId }, "session archived via /new");
 
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-      const channelContext = `Current Discord channel ID: ${interaction.channelId}`;
-      const ts = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(5, 16).replace("-", "/");
       const newSessionContent = `<@${interaction.user.id}>(${interaction.user.username}) 使用 /new 開始了新對話。請根據 system prompt 中的人格設定和長期記憶，以你的身份打招呼。`;
-
-      // 直接用結構化格式 append，不經過 ask 的 prompt 參數
       session.append({ role: "user", content: newSessionContent, time: ts });
 
       try {
@@ -99,6 +107,27 @@ export async function startBot(token: string): Promise<void> {
     // 所有訊息都 append 到 session（不論是否觸發 bot）
     const sessionId = sessionIdForMessage(message);
     const session = new Session(sessionId);
+
+    // Thread/論壇貼文的第一次進入：抓初始訊息作為 context
+    if (session.length === 0 && message.channel.isThread()) {
+      try {
+        const starter = await message.channel.fetchStarterMessage();
+        if (starter) {
+          const ts = new Date(starter.createdTimestamp).toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(5, 16).replace("-", "/");
+          const authorName = starter.member?.displayName ?? starter.author.username;
+          const threadName = message.channel.name;
+          session.append({
+            role: starter.author.bot ? "assistant" : "user",
+            content: starter.author.bot
+              ? `[thread: ${threadName}]\n${starter.content}`
+              : `<@${starter.author.id}>(${authorName}): [thread: ${threadName}]\n${starter.content}`,
+            time: ts,
+            msgId: starter.id,
+          });
+        }
+      } catch { /* starter message not available */ }
+    }
+
     const fmt = await formatIncomingMessage(message);
     session.append({ role: "user", content: fmt.content, time: fmt.time, msgId: fmt.msgId, ...(fmt.replyTo ? { replyTo: fmt.replyTo } : {}) });
 

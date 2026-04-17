@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { logger } from "../../logger.js";
 import { MEMORY_DIR, MEMORY_INDEX } from "../../paths.js";
+import { addVector, searchVectors } from "../../embedding.js";
 import type { Tool } from "../../types.js";
 
 function today(): string {
@@ -33,6 +34,9 @@ export const memorySave: Tool = {
       const entry = `\n- [${timestamp}] ${content}`;
       writeFileSync(filePath, existing + entry + "\n");
 
+      // 同時存向量索引（背景執行，不阻塞回應）
+      addVector(content, `${date}.md`).catch(() => {});
+
       return `Memory saved to ${date}.md`;
     } catch (err) {
       logger.error({ err }, "memory save failed");
@@ -43,11 +47,11 @@ export const memorySave: Tool = {
 
 export const memorySearch: Tool = {
   name: "memory_search",
-  description: "Search across all memory files for relevant information. Use this when the user asks about something that might have been mentioned before, or when you need context from past conversations.",
+  description: "Search across all memory files using semantic search. Use this when the user asks about something that might have been mentioned before, or when you need context from past conversations.",
   parameters: {
     type: "object",
     properties: {
-      query: { type: "string", description: "Search query (keyword match)" },
+      query: { type: "string", description: "Search query (supports semantic/meaning-based search)" },
     },
     required: ["query"],
   },
@@ -56,21 +60,36 @@ export const memorySearch: Tool = {
     logger.info({ query }, "memory search");
 
     try {
+      const results: string[] = [];
+
+      // 語意搜尋（向量）
+      const vectorResults = await searchVectors(query);
+      if (vectorResults.length > 0) {
+        results.push("## Semantic matches\n" + vectorResults.map(r =>
+          `- [${r.file}] (score: ${r.score.toFixed(2)}) ${r.text}`
+        ).join("\n"));
+      }
+
+      // 關鍵字搜尋（fallback + 補充）
       mkdirSync(MEMORY_DIR, { recursive: true });
       const files = readdirSync(MEMORY_DIR).filter(f => f.endsWith(".md")).sort().reverse();
       const q = query.toLowerCase();
-      const results: string[] = [];
+      const keywordResults: string[] = [];
 
       try {
         const index = readFileSync(MEMORY_INDEX, "utf-8");
         const lines = index.split("\n").filter(l => l.toLowerCase().includes(q));
-        if (lines.length > 0) results.push(`[MEMORY.md]\n${lines.join("\n")}`);
+        if (lines.length > 0) keywordResults.push(`[MEMORY.md]\n${lines.join("\n")}`);
       } catch { /* no index yet */ }
 
       for (const file of files.slice(0, 30)) {
         const content = readFileSync(resolve(MEMORY_DIR, file), "utf-8");
         const lines = content.split("\n").filter(l => l.toLowerCase().includes(q));
-        if (lines.length > 0) results.push(`[${file}]\n${lines.join("\n")}`);
+        if (lines.length > 0) keywordResults.push(`[${file}]\n${lines.join("\n")}`);
+      }
+
+      if (keywordResults.length > 0) {
+        results.push("## Keyword matches\n" + keywordResults.join("\n\n"));
       }
 
       return results.length > 0 ? results.join("\n\n") : "No matching memories found.";
