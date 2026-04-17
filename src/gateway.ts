@@ -75,7 +75,6 @@ function loadAndScheduleAll(): void {
       logger.error({ id: job.id, schedule: job.schedule, err }, "invalid cron schedule");
     }
   }
-  logger.info({ count, total: jobs.length }, "crons loaded");
   console.log(`Loaded ${count} cron jobs (${jobs.length} total)`);
 }
 
@@ -83,7 +82,7 @@ function startWatcher(): void {
   setInterval(() => {
     loadAndScheduleAll();
     loadAndScheduleReminders();
-  }, 30000);
+  }, 60 * 60 * 1000);
 }
 
 // --- Reminders ---

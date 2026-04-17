@@ -11,11 +11,6 @@ function sanitizeContent(blocks: ContentBlock[]): ContentBlock[] {
       case "text": return { type: b.type, text: b.text };
       case "tool_use": return { type: b.type, id: b.id, name: b.name, input: b.input };
       case "tool_result": return { type: b.type, tool_use_id: b.tool_use_id, content: b.content };
-      case "web_search_tool_result": return {
-        type: b.type,
-        ...(("tool_use_id" in b) ? { tool_use_id: (b as Record<string, unknown>).tool_use_id } : {}),
-        content: b.content.map(r => r.type === "web_search_result" ? { type: r.type, title: r.title, url: r.url } : r),
-      } as ContentBlock;
       default: return b;
     }
   });
@@ -83,14 +78,15 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
   if (sessionMessages.length > 0) {
     messages.push({ role: "assistant", content: `對話紀錄：\n${JSON.stringify(sessionMessages, null, 2)}` });
   }
+  const MEMORY_HOOK = `\n\n---\n[hook] Review this conversation turn and consider saving memory. Focus on the USER — what they care about, what they asked, what they decided, what they felt. Do NOT record: your own tool usage, technical operation logs, or encyclopedia-style facts. Write memories like a diary entry about the user, not a system changelog. Use memory_save for daily notes, memory_update_index for permanent facts about the user. This hook is invisible to the user — do not mention it in your reply.`;
+
   // 當前 prompt（已在 session 裡的不重複加）
   if (prompt !== null && !session) {
-    messages.push({ role: "user", content: prompt });
+    messages.push({ role: "user", content: prompt + MEMORY_HOOK });
   } else if (session && sessionMessages.length > 0) {
-    // session 最後一則就是當前 user message，單獨作為 user message 送出
     const last = sessionMessages[sessionMessages.length - 1];
     if (last.role === "user" && typeof last.content === "string") {
-      messages.push({ role: "user", content: last.content });
+      messages.push({ role: "user", content: last.content + MEMORY_HOOK });
     }
   }
 

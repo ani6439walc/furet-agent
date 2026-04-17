@@ -69,7 +69,7 @@ Agent (agent.ts) ── Anthropic Messages API ──► router (localhost:8317)
 
 | 層 | 內容 | 可改？ |
 |----|------|--------|
-| 系統層 | 執行規則、URL 處理、工具使用指南、Discord 訊息格式、記憶規則 | 否（寫死） |
+| 系統層 | 自主行為規則、URL 處理、工具使用指南、Discord 訊息格式 | 否（寫死） |
 | 時間層 | 當前日期時間（Asia/Taipei） | 自動 |
 | 人格層 | `workspace/FURET.md`（名字、個性、語氣） | 是（外部檔案） |
 | 記憶層 | `workspace/MEMORY.md`（長期記憶索引） | 是（AI 自行維護） |
@@ -182,6 +182,14 @@ Registry 負責：
 | `reminder_list` | 列出提醒 | - |
 | `reminder_delete` | 刪除提醒 | `workspace/reminders.json` |
 | `discord_fetch_message` | 用 channel+message ID 抓 Discord 訊息 | - |
+| `discord_send_message` | 主動發訊息到指定 channel（可選 reply_to） | - |
+| `discord_react` | 對訊息加 emoji reaction | - |
+| `discord_pin` | 釘選訊息 | - |
+| `discord_unpin` | 取消釘選訊息 | - |
+| `discord_create_thread` | 從訊息建立討論串 | - |
+| `discord_delete_thread` | 刪除討論串 | - |
+| `discord_edit_message` | 編輯 bot 自己的訊息 | - |
+| `discord_delete_message` | 刪除 bot 自己的訊息 | - |
 | `web_search` | Anthropic server-side 網路搜尋 | - |
 | `web_fetch` | Anthropic server-side 讀取指定 URL | - |
 | `code_execution` | Anthropic server-side Python 執行（計算、資料分析） | - |
@@ -195,9 +203,10 @@ Registry 負責：
 | 長期記憶 | `workspace/MEMORY.md` | 持久事實，自動載入 system prompt |
 | 每日記憶 | `workspace/memory/yyyy-MM-dd.md` | 當日事件、對話、感想 |
 
-- `memory_save`：追加到當日檔案（寫前先讀，避免重複）
-- `memory_update_index`：覆寫 MEMORY.md（寫前先讀）
-- Agent 每輪對話後自動審視是否需要記錄
+- `memory_save`：追加到當日檔案
+- `memory_update_index`：覆寫 MEMORY.md
+- 每輪對話結束時，透過 memory hook（附加在 user message 尾部）提醒 agent 審視是否需要記錄
+- Hook 指引 agent 以使用者為中心記錄（偏好、興趣、決定），不記操作日誌
 - Journal（每日排程）：整理當日記憶檔，補充遺漏
 
 ## 專案結構
@@ -298,7 +307,7 @@ journal:
 ### Phase 3：Discord 介面
 - ✅ 3.1 MVP — mention 觸發、reply、session per channel/DM
 - ✅ 3.2 訊息上下文 — 全訊息監聽、reply chain、mention 正規化、discord_fetch_message
-- 🔲 3.3 Discord custom tools — send_message, react, pin, thread 操作等
+- ✅ 3.3 Discord custom tools — send_message, react, pin/unpin, thread, edit, delete
 - 🔲 3.4 智慧回應 — 自主判斷回文字 / react / 不回
 
 ### 代碼重構 ✅

@@ -7,14 +7,22 @@ import { weather } from "./builtin/weather.js";
 import { memorySave, memorySearch, memoryList, memoryUpdateIndex } from "./builtin/memory.js";
 import { cronCreate, cronList, cronDelete, cronToggle } from "./builtin/cron.js";
 import { reminderCreate, reminderList, reminderDelete } from "./builtin/reminder.js";
-import { discordFetchMessage } from "./builtin/discord.js";
+import {
+  discordFetchMessage, discordSendMessage, discordReact,
+  discordPin, discordUnpin,
+  discordCreateThread, discordCreateForumPost, discordDeleteThread,
+  discordEditMessage, discordDeleteMessage,
+} from "./builtin/discord.js";
 
 const tools: Tool[] = [
   bash, readFileTool, writeFileTool, weather,
   memorySave, memorySearch, memoryList, memoryUpdateIndex,
   cronCreate, cronList, cronDelete, cronToggle,
   reminderCreate, reminderList, reminderDelete,
-  discordFetchMessage,
+  discordFetchMessage, discordSendMessage, discordReact,
+  discordPin, discordUnpin,
+  discordCreateThread, discordCreateForumPost, discordDeleteThread,
+  discordEditMessage, discordDeleteMessage,
 ];
 
 const executorMap = new Map(tools.map(t => [t.name, t.execute]));
