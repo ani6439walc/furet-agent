@@ -3,8 +3,37 @@ import { logger } from "./logger.js";
 import { ask } from "./agent.js";
 import { loadCrons, type CronJob } from "./tools/builtin/cron.js";
 import { loadReminders, saveReminders, type Reminder } from "./tools/builtin/reminder.js";
+import { getDiscordClient } from "./tools/builtin/discord.js";
 import { startBot } from "./bot.js";
 import { loadConfig } from "./config.js";
+import { fixMarkdownLinks } from "./utils/format.js";
+
+async function sendToChannel(channelId: string, text: string): Promise<void> {
+  const client = getDiscordClient();
+  if (!client) return;
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased() || !("send" in channel)) {
+      logger.warn({ channelId }, "channel not found or not text-based");
+      return;
+    }
+    const formatted = fixMarkdownLinks(text);
+    // Discord 2000 字元限制
+    if (formatted.length <= 2000) {
+      await channel.send(formatted);
+    } else {
+      let remaining = formatted;
+      while (remaining.length > 0) {
+        let cutAt = remaining.lastIndexOf("\n", 2000);
+        if (cutAt < 1000) cutAt = 2000;
+        await channel.send(remaining.slice(0, cutAt));
+        remaining = remaining.slice(cutAt).trimStart();
+      }
+    }
+  } catch (err) {
+    logger.error({ err: (err as Error).message, channelId }, "failed to send to channel");
+  }
+}
 
 const activeTasks = new Map<string, ScheduledTask>();
 
@@ -18,8 +47,11 @@ function scheduleCron(job: CronJob): void {
     try {
       const response = await ask(job.prompt);
       logger.info({ id: job.id, result: response.text.slice(0, 200) }, "cron result");
-      // TODO: 之後接 Discord 時，把結果送到指定 channel
-      console.log(`[cron:${job.name}] ${response.text}`);
+      if (job.channel_id && response.text) {
+        await sendToChannel(job.channel_id, response.text);
+      } else {
+        console.log(`[cron:${job.name}] ${response.text}`);
+      }
     } catch (err) {
       logger.error({ id: job.id, err }, "cron execution failed");
     }
@@ -29,7 +61,6 @@ function scheduleCron(job: CronJob): void {
 }
 
 function loadAndScheduleAll(): void {
-  // 先停掉所有現有排程
   for (const task of activeTasks.values()) task.stop();
   activeTasks.clear();
 
@@ -48,7 +79,6 @@ function loadAndScheduleAll(): void {
   console.log(`Loaded ${count} cron jobs (${jobs.length} total)`);
 }
 
-// 定期重新載入 crons.json（每 30 秒），這樣 CLI 建的新排程會被撿起來
 function startWatcher(): void {
   setInterval(() => {
     loadAndScheduleAll();
@@ -65,7 +95,6 @@ function scheduleReminder(r: Reminder): void {
   }
   const delay = new Date(r.triggerAt).getTime() - Date.now();
   if (delay <= 0) {
-    // 已過期，直接刪除
     removeReminder(r.id);
     return;
   }
@@ -74,7 +103,11 @@ function scheduleReminder(r: Reminder): void {
     try {
       const response = await ask(r.prompt);
       logger.info({ id: r.id, result: response.text.slice(0, 200) }, "reminder result");
-      console.log(`[reminder:${r.name}] ${response.text}`);
+      if (r.channel_id && response.text) {
+        await sendToChannel(r.channel_id, response.text);
+      } else {
+        console.log(`[reminder:${r.name}] ${response.text}`);
+      }
     } catch (err) {
       logger.error({ id: r.id, err }, "reminder execution failed");
     }
@@ -107,7 +140,7 @@ function loadAndScheduleReminders(): void {
   }
 }
 
-// --- Journal (每天固定時間寫日記) ---
+// --- Journal ---
 function scheduleJournal(): void {
   const config = loadConfig();
   if (!config.journal.enabled) return;
@@ -121,7 +154,6 @@ function scheduleJournal(): void {
 2. 回顧今天所有對話跟互動，補充當下可能沒記下來的東西：有趣的事、討論了什麼、使用者的情緒、你自己的感想
 3. 把整理、補充後的完整內容用 write_file 覆蓋回 workspace/memory/${date}.md
 `;
-    // fire-and-forget：不 await，讓 journal 在背景跑，不阻塞其他排程或訊息處理
     ask(prompt)
       .then(response => logger.info({ date, result: response.text.slice(0, 200) }, "journal done"))
       .catch(err => logger.error({ err, date }, "journal failed"));
@@ -139,7 +171,6 @@ loadAndScheduleReminders();
 scheduleJournal();
 startWatcher();
 
-// Discord bot（有 enabled + token 才啟動）
 const config = loadConfig();
 if (config.discord.enabled && config.discord.token) {
   await startBot(config.discord.token).catch(err => {
@@ -152,7 +183,6 @@ if (config.discord.enabled && config.discord.token) {
 
 console.log("Furet Gateway running. Press Ctrl+C to stop.");
 
-// 保持 process 不退出
 process.on("SIGINT", () => {
   console.log("\nGateway stopped.");
   logger.info("gateway stop");

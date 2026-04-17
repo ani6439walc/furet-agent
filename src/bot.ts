@@ -68,10 +68,12 @@ export async function startBot(token: string): Promise<void> {
 
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      const newSessionPrompt = `使用者 ${interaction.user.username} 剛剛在 Discord 上使用 /new 指令清除了對話歷史，準備開始新的對話。請閱讀 FURET.md 後，以檔案內設定的身份打招呼，可以根據 MEMORY.md 裡記錄的資訊展現對使用者的記憶。這是一個新new的對話。`;
+      const channelContext = `Current Discord channel ID: ${interaction.channelId}`;
+      const ts = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(5, 16).replace("-", "/");
+      const newSessionPrompt = `[${ts}] 使用者 <@${interaction.user.id}>(${interaction.user.username}) 使用 /new 開始了新對話。請根據 system prompt 中的人格設定和長期記憶，以你的身份打招呼。`;
 
       try {
-        const response = await ask(newSessionPrompt, { session });
+        const response = await ask(newSessionPrompt, { session, systemPrompt: channelContext });
         const text = response.text || "（新對話開始）";
         const formatted = fixMarkdownLinks(text);
         const chunks = chunkMessage(formatted, 2000);
@@ -120,8 +122,8 @@ export async function startBot(token: string): Promise<void> {
 }
 
 /**
- * 把 Discord 訊息格式化為要進 session 的 user message content。
- * 格式：[msg:id] [作者名](id=X) 對所有人/你 說（回覆 msg:Y）: content
+ * 把 Discord 訊息格式化為 session 的 user message content。
+ * 格式：[msg:<id> <MM/DD HH:mm>] <@authorId>(暱稱): 內容 (reply to msg:<id>)
  */
 async function formatIncomingMessage(message: Message): Promise<string> {
   const authorName = message.member?.displayName ?? message.author.username;
@@ -151,13 +153,14 @@ async function formatIncomingMessage(message: Message): Promise<string> {
     return text.replace(/<@!?(\d+)>/g, (orig, id) => `${orig}(${nameMap.get(id) ?? "unknown"})`);
   };
 
+  const ts = new Date(message.createdTimestamp).toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(5, 16).replace("-", "/");
   const content = await normalizeMentions(message.content);
-  const replyTag = message.reference?.messageId ? ` (回覆 msg:${message.reference.messageId})` : "";
+  const replyTag = message.reference?.messageId ? ` (reply to msg:${message.reference.messageId})` : "";
   const attach = message.attachments.size > 0
     ? ` [附件: ${[...message.attachments.values()].map(a => a.url).join(", ")}]`
     : "";
 
-  return `[msg:${message.id}] [${authorName}](id=${authorId})${replyTag}: ${content}${attach}`;
+  return `[msg:${message.id} ${ts}] <@${authorId}>(${authorName}):${replyTag} ${content}${attach}`;
 }
 
 async function handleTrigger(message: Message, session: Session): Promise<void> {
@@ -172,8 +175,8 @@ async function handleTrigger(message: Message, session: Session): Promise<void> 
   }
 
   try {
-    // prompt 傳 null：session 最後一則就是當前訊息（剛 append 的）
-    const response = await ask(null, { session });
+    const channelContext = `Current Discord channel ID: ${message.channelId}`;
+    const response = await ask(null, { session, systemPrompt: channelContext });
     logger.info({
       sessionId: session.id,
       textLength: response.text?.length ?? 0,

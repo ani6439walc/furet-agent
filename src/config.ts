@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { parse } from "yaml";
+import { CONFIG_PATH } from "./paths.js";
 import "dotenv/config";
 
 export interface FuretConfig {
@@ -18,9 +18,10 @@ export interface FuretConfig {
   };
   journal: {
     enabled: boolean;
-    hour: number;              // 0-23
-    minute: number;            // 0-59
+    hour: number;
+    minute: number;
   };
+  skills: string[];
 }
 
 const DEFAULTS: FuretConfig = {
@@ -41,11 +42,9 @@ const DEFAULTS: FuretConfig = {
     hour: 22,
     minute: 0,
   },
+  skills: [],
 };
 
-/**
- * 解析 ${VAR} 變數，從 process.env 讀取
- */
 function resolveEnvVars(value: unknown): unknown {
   if (typeof value === "string") {
     return value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
@@ -68,11 +67,9 @@ let cached: FuretConfig | null = null;
 export function loadConfig(): FuretConfig {
   if (cached) return cached;
 
-  const configPath = resolve(import.meta.dirname ?? process.cwd(), "..", "config.yaml");
-
   let raw: Record<string, unknown> = {};
   try {
-    const content = readFileSync(configPath, "utf-8");
+    const content = readFileSync(CONFIG_PATH, "utf-8");
     raw = (parse(content) as Record<string, unknown>) ?? {};
   } catch {
     // config.yaml 不存在就用預設值
@@ -84,6 +81,7 @@ export function loadConfig(): FuretConfig {
     llm: { ...DEFAULTS.llm, ...(resolved.llm as Record<string, unknown>) } as FuretConfig["llm"],
     discord: { ...DEFAULTS.discord, ...(resolved.discord as Record<string, unknown>) } as FuretConfig["discord"],
     journal: { ...DEFAULTS.journal, ...(resolved.journal as Record<string, unknown>) } as FuretConfig["journal"],
+    skills: (resolved.skills as string[] | undefined) ?? DEFAULTS.skills,
   };
 
   return cached!;

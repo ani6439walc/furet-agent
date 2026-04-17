@@ -1,161 +1,40 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { logger } from "./logger.js";
 import { loadConfig } from "./config.js";
-import { bashDefinition, executeBash } from "./tools/builtin/bash.js";
-import { readFileDefinition, executeReadFile } from "./tools/builtin/read-file.js";
-import { writeFileDefinition, executeWriteFile } from "./tools/builtin/write-file.js";
-import { weatherDefinition, executeWeather } from "./tools/builtin/weather.js";
-import {
-  memorySaveDefinition, executeMemorySave,
-  memorySearchDefinition, executeMemorySearch,
-  memoryListDefinition, executeMemoryList,
-  memoryUpdateIndexDefinition, executeMemoryUpdateIndex,
-} from "./tools/builtin/memory.js";
-import {
-  cronCreateDefinition, executeCronCreate,
-  cronListDefinition, executeCronList,
-  cronDeleteDefinition, executeCronDelete,
-  cronToggleDefinition, executeCronToggle,
-} from "./tools/builtin/cron.js";
-import {
-  reminderCreateDefinition, executeReminderCreate,
-  reminderListDefinition, executeReminderList,
-  reminderDeleteDefinition, executeReminderDelete,
-} from "./tools/builtin/reminder.js";
-import {
-  discordFetchMessageDefinition, executeDiscordFetchMessage,
-} from "./tools/builtin/discord.js";
+import { buildSystemPrompt } from "./prompt.js";
+import { anthropicTools, executeTool } from "./tools/registry.js";
+import type { ContentBlock, Message, ToolActivity, AgentResponse, AgentOptions } from "./types.js";
+
+/** 清除 API 回傳 content blocks 中的多餘欄位（如 caller），只保留我們定義的欄位 */
+function sanitizeContent(blocks: ContentBlock[]): ContentBlock[] {
+  return blocks.map(b => {
+    switch (b.type) {
+      case "text": return { type: b.type, text: b.text };
+      case "tool_use": return { type: b.type, id: b.id, name: b.name, input: b.input };
+      case "tool_result": return { type: b.type, tool_use_id: b.tool_use_id, content: b.content };
+      case "web_search_tool_result": return {
+        type: b.type,
+        ...(("tool_use_id" in b) ? { tool_use_id: (b as Record<string, unknown>).tool_use_id } : {}),
+        content: b.content.map(r => r.type === "web_search_result" ? { type: r.type, title: r.title, url: r.url } : r),
+      } as ContentBlock;
+      default: return b;
+    }
+  });
+}
+
+function extractText(blocks: ContentBlock[]): string {
+  return blocks.filter((b): b is ContentBlock & { type: "text" } => b.type === "text").map(b => b.text).join("");
+}
+
+function nowTimestamp(): string {
+  return new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(5, 16).replace("-", "/");
+}
 
 const config = loadConfig();
 const API_URL = `${config.llm.base_url || "https://api.anthropic.com/v1"}/messages`;
 const API_KEY = config.llm.api_key;
 const MODEL = config.llm.model;
 
-export interface ToolActivity {
-  tool: string;
-  input: Record<string, unknown>;
-}
-
-export interface AgentResponse {
-  text: string;
-  toolsUsed: ToolActivity[];
-  durationMs: number;
-}
-
-export interface AgentOptions {
-  systemPrompt?: string;
-  maxTurns?: number;
-  session?: import("./session.js").Session;
-  onToolUse?: (tool: string, input: Record<string, unknown>) => void;
-}
-
-// --- Anthropic types ---
-type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string }
-  | { type: "web_search_tool_result"; content: Array<{ type: string; url?: string; title?: string; encrypted_content?: string }> };
-
-type AnthropicMessage = {
-  role: "user" | "assistant";
-  content: string | ContentBlock[];
-};
-
-// --- System prompt ---
-const SYSTEM_INSTRUCTIONS = `
-You are a personal assistant agent.
-
-## Execution Rules
-1. ALWAYS produce a text response. After all tool calls are done, you MUST output text to reply to the user. Never end with only tool calls and no text.
-2. Always fulfill the user's request FIRST. Deliver the answer/result before any side-effects.
-3. When a tool returns data, ALWAYS include the relevant information in your response.
-4. After answering a web search question, include a "Sources:" section with relevant [title](url) links from the search results.
-5. Respond in the same language the user uses.
-
-## Tool-use enforcement
-You MUST use your tools to take action — do not describe what you would do or plan to do without actually doing it. When you say you will perform an action (e.g. "I will run the tests", "Let me check the file", "I will create the project"), you MUST immediately make the corresponding tool call in the same response. Never end your turn with a promise of future action — execute it now.
-Keep working until the task is actually complete. Do not stop with a summary of what you plan to do next time. If you have tools available that can accomplish the task, use them instead of telling the user what you would do.
-Every response should either (a) contain tool calls that make progress, or (b) deliver a final result to the user. Responses that only describe intentions without acting are not acceptable.
-
-## Using your tools
-- Use the RIGHT tool for each job. Do NOT use bash when a dedicated tool exists:
-  - To read files: use read_file, NOT cat/head/tail
-  - To write files: use write_file, NOT echo/cat with redirection
-  - To search file content: use grep, NOT bash grep
-- Reserve bash exclusively for shell commands that have no dedicated tool (git, curl, npm, etc.)
-
-## Memory
-- memory_save: appends to today's file (workspace/memory/yyyy-MM-dd.md). Read the file first before appending to avoid duplicates. Record things worth remembering — important facts, interesting events, meaningful moments. Not timestamps and routine logs.
-- memory_update_index: overwrites MEMORY.md. Read it first before updating. For persistent long-term facts. Keep it concise.
-- memory_search: search past daily memory files when the user refers to something from previous days.
-- Save silently. Do NOT mention saving memory unless asked.
-
-`;
-
-function loadFile(name: string): string {
-  try {
-    return readFileSync(resolve(import.meta.dirname ?? process.cwd(), "..", "workspace", name), "utf-8");
-  } catch {
-    return "";
-  }
-}
-
-function buildSystemPrompt(extra?: string): string {
-  const date = `Current date: ${new Date().toISOString().split("T")[0]}`;
-  const persona = loadFile("FURET.md");
-  const memory = loadFile("MEMORY.md");
-  const memorySection = memory ? `\n## Long-term Memory\n${memory}` : "";
-  return [SYSTEM_INSTRUCTIONS, date, persona, memorySection, extra].filter(Boolean).join("\n");
-}
-
-// --- Tool definitions (OpenAI format → Anthropic format conversion) ---
-const OPENAI_TOOLS = [
-  bashDefinition, readFileDefinition, writeFileDefinition,
-  weatherDefinition,
-  memorySaveDefinition, memorySearchDefinition, memoryListDefinition, memoryUpdateIndexDefinition,
-  cronCreateDefinition, cronListDefinition, cronDeleteDefinition, cronToggleDefinition,
-  reminderCreateDefinition, reminderListDefinition, reminderDeleteDefinition,
-  discordFetchMessageDefinition,
-];
-
-// 轉成 Anthropic tool format
-const TOOLS = OPENAI_TOOLS.map(t => ({
-  name: t.function.name,
-  description: t.function.description,
-  input_schema: t.function.parameters,
-}));
-
-// 加上 Anthropic server-side web_search
-const ALL_TOOLS = [
-  ...TOOLS,
-  { type: "web_search_20250305", name: "web_search", max_uses: 5 },
-];
-
-async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
-  switch (name) {
-    case "bash": return executeBash(args as { command: string });
-    case "read_file": return executeReadFile(args as { path: string });
-    case "write_file": return executeWriteFile(args as { path: string; content: string });
-    case "get_weather": return executeWeather(args as { city: string; lang?: string });
-    case "memory_save": return executeMemorySave(args as { content: string });
-    case "memory_search": return executeMemorySearch(args as { query: string });
-    case "memory_list": return executeMemoryList();
-    case "memory_update_index": return executeMemoryUpdateIndex(args as { content: string });
-    case "cron_create": return executeCronCreate(args as { name: string; schedule: string; prompt: string });
-    case "cron_list": return executeCronList();
-    case "cron_delete": return executeCronDelete(args as { id: string });
-    case "cron_toggle": return executeCronToggle(args as { id: string; enabled: boolean });
-    case "reminder_create": return executeReminderCreate(args as { name: string; trigger_at: string; prompt: string });
-    case "reminder_list": return executeReminderList();
-    case "reminder_delete": return executeReminderDelete(args as { id: string });
-    case "discord_fetch_message": return executeDiscordFetchMessage(args as { channel_id: string; message_id: string });
-    default: return `Unknown tool: ${name}`;
-  }
-}
-
-// --- Anthropic API call ---
-async function callAnthropic(system: string, messages: AnthropicMessage[]): Promise<{
+async function callAnthropic(system: string, messages: Message[]): Promise<{
   content: ContentBlock[];
   stop_reason: string;
 }> {
@@ -171,7 +50,7 @@ async function callAnthropic(system: string, messages: AnthropicMessage[]): Prom
       max_tokens: 8192,
       system,
       messages,
-      tools: ALL_TOOLS,
+      tools: anthropicTools,
     }),
   });
   if (!res.ok) {
@@ -181,26 +60,23 @@ async function callAnthropic(system: string, messages: AnthropicMessage[]): Prom
   return res.json() as Promise<{ content: ContentBlock[]; stop_reason: string }>;
 }
 
-// --- Agent loop ---
 export async function ask(prompt: string | null, options: AgentOptions = {}): Promise<AgentResponse> {
   const startTime = Date.now();
-  const maxTurns = options.maxTurns ?? 10;
+  const maxTurns = options.maxTurns ?? 50;
   const toolsUsed: ToolActivity[] = [];
-  const collectedTexts: string[] = [];
 
   logger.info({ prompt: prompt?.slice(0, 200) ?? "(session tail)" }, "query start");
 
   const session = options.session;
 
-  // 若有新 prompt，append 進 session
   if (prompt !== null) {
     session?.append({ role: "user", content: prompt });
   }
 
-  // 組 messages（Anthropic 格式：system 分離，messages 只有 user/assistant）
+  // session 只存純文字對話，API 用的 messages 另外維護（包含 tool 互動）
   const systemPrompt = buildSystemPrompt(options.systemPrompt);
-  const sessionMessages = (session?.getMessages() ?? []) as AnthropicMessage[];
-  const messages: AnthropicMessage[] = [
+  const sessionMessages = (session?.getMessages() ?? []) as Message[];
+  const messages: Message[] = [
     ...sessionMessages,
     ...(prompt !== null && !session ? [{ role: "user" as const, content: prompt }] : []),
   ];
@@ -214,35 +90,45 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
       blocks: response.content.map(b => b.type),
     }, "agent turn");
 
-    // 收集文字 + tool calls
-    const textBlocks: string[] = [];
     const toolUseBlocks: Array<{ type: "tool_use"; id: string; name: string; input: Record<string, unknown> }> = [];
 
     for (const block of response.content) {
-      if (block.type === "text") textBlocks.push(block.text);
       if (block.type === "tool_use") toolUseBlocks.push(block);
       if (block.type === "web_search_tool_result") {
         toolsUsed.push({ tool: "web_search", input: {} });
         logger.info("server-side web_search used");
         options.onToolUse?.("web_search", {});
       }
+      if ((block as Record<string, unknown>).type === "web_fetch_tool_result") {
+        toolsUsed.push({ tool: "web_fetch", input: {} });
+        logger.info("server-side web_fetch used");
+        options.onToolUse?.("web_fetch", {});
+      }
+      if ((block as Record<string, unknown>).type === "code_execution_tool_result") {
+        toolsUsed.push({ tool: "code_execution", input: {} });
+        logger.info("server-side code_execution used");
+        options.onToolUse?.("code_execution", {});
+      }
     }
 
-    if (textBlocks.length > 0) collectedTexts.push(textBlocks.join(""));
+    const cleanContent = sanitizeContent(response.content);
+    messages.push({ role: "assistant", content: cleanContent });
 
-    // 把 assistant 回覆加進 messages
-    messages.push({ role: "assistant", content: response.content });
-
-    // 沒有 tool call → 結束
+    // 沒有 tool call → 最後一輪
     if (toolUseBlocks.length === 0) {
-      session?.append({ role: "assistant", content: response.content });
+      const finalText = extractText(cleanContent);
+      // session 只存 text blocks，加上時間戳
+      const textOnly = cleanContent.filter(b => b.type === "text") as Array<{ type: "text"; text: string }>;
+      if (textOnly.length > 0) {
+        textOnly[0] = { type: "text", text: `[${nowTimestamp()}] ${textOnly[0].text}` };
+        session?.append({ role: "assistant", content: textOnly });
+      }
       const durationMs = Date.now() - startTime;
-      const finalText = collectedTexts.join("\n\n");
       logger.info({ durationMs, toolsUsed: toolsUsed.map(t => t.tool), textLength: finalText.length }, "query done");
       return { text: finalText, toolsUsed, durationMs };
     }
 
-    // 執行 tool calls
+    // 有 tool call → 執行，結果只進 messages（不存 session）
     const toolResults: ContentBlock[] = [];
     for (const toolBlock of toolUseBlocks) {
       toolsUsed.push({ tool: toolBlock.name, input: toolBlock.input });
@@ -253,14 +139,7 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
       toolResults.push({ type: "tool_result", tool_use_id: toolBlock.id, content: result });
     }
 
-    // tool results 作為 user message 送回（Anthropic 格式）
-    const userToolMsg: AnthropicMessage = { role: "user", content: toolResults };
-    messages.push(userToolMsg);
-
-    if (session) {
-      session.append({ role: "assistant", content: response.content });
-      session.append(userToolMsg);
-    }
+    messages.push({ role: "user", content: toolResults });
   }
 
   const durationMs = Date.now() - startTime;
