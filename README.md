@@ -25,18 +25,14 @@ Install will:
 After install, fill in your settings:
 
 ```bash
-vim .env          # API keys, Discord token
+vim .env          # API keys, Discord token, Google OAuth credentials
 vim config.yaml   # model, Discord options, journal, skills
 ```
 
 Then start:
 
 ```bash
-# manual
 furet gateway
-
-# or via systemd (auto-start on boot)
-sudo systemctl start furet
 ```
 
 ## Commands
@@ -46,6 +42,30 @@ sudo systemctl start furet
 | `furet gateway` | Start Discord bot |
 | `furet install` | Install dependencies + register systemd service |
 | `furet` | Interactive CLI mode |
+
+## Discord Slash Commands
+
+| Command | Description |
+|---------|------------|
+| `/new` | Archive session and start fresh |
+| `/status` | Show bot status (model, tokens, cost, sessions) |
+| `/restart` | Restart the gateway (owner only) |
+| `/model` | Switch AI model with autocomplete (owner only) |
+| `/google-auth` | Google OAuth setup (owner only) |
+
+## Google API Setup
+
+Furet integrates with Google Calendar, Gmail, Drive, and Tasks.
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable: Calendar API, Gmail API, Drive API, Tasks API
+3. Create OAuth 2.0 Client ID (Desktop app type)
+4. Add credentials to `.env`:
+   ```
+   GOOGLE_CLIENT_ID=your-client-id
+   GOOGLE_CLIENT_SECRET=your-client-secret
+   ```
+5. Restart bot, then use `/google-auth` in Discord to authorize
 
 ## Service Management
 
