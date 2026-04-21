@@ -1,8 +1,10 @@
 import { execSync } from "node:child_process";
-import { copyFileSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dirname!, "..");
+const WORKSPACE = resolve(ROOT, "workspace");
+const TEMPLATES = resolve(ROOT, "templates");
 
 function run(cmd: string, opts?: { sudo?: boolean }) {
   const full = opts?.sudo ? `sudo ${cmd}` : cmd;
@@ -11,13 +13,18 @@ function run(cmd: string, opts?: { sudo?: boolean }) {
 }
 
 function copyIfMissing(src: string, dest: string) {
-  const srcPath = resolve(ROOT, src);
-  const destPath = resolve(ROOT, dest);
-  if (existsSync(destPath)) {
+  if (existsSync(dest)) {
     console.log(`skip: ${dest} already exists`);
   } else {
-    copyFileSync(srcPath, destPath);
+    copyFileSync(src, dest);
     console.log(`created: ${dest}`);
+  }
+}
+
+function ensureDir(path: string) {
+  if (!existsSync(path)) {
+    mkdirSync(path, { recursive: true });
+    console.log(`created: ${path}`);
   }
 }
 
@@ -27,14 +34,39 @@ run("npm install");
 
 // --- 2. config files ---
 console.log("\n=== Config files ===");
-copyIfMissing("config.example.yaml", "config.yaml");
-copyIfMissing(".env.example", ".env");
+copyIfMissing(resolve(ROOT, "config.example.yaml"), resolve(ROOT, "config.yaml"));
+copyIfMissing(resolve(ROOT, ".env.example"), resolve(ROOT, ".env"));
 
-// --- 3. npm link ---
+// --- 3. workspace ---
+console.log("\n=== Setting up workspace ===");
+ensureDir(WORKSPACE);
+ensureDir(resolve(WORKSPACE, "config"));
+ensureDir(resolve(WORKSPACE, "memory"));
+ensureDir(resolve(WORKSPACE, "sessions"));
+ensureDir(resolve(WORKSPACE, "sessions/archive"));
+ensureDir(resolve(WORKSPACE, "skills"));
+
+// workspace files from templates
+copyIfMissing(resolve(TEMPLATES, "AGENT.md"), resolve(WORKSPACE, "AGENT.md"));
+copyIfMissing(resolve(TEMPLATES, "SOUL.md"), resolve(WORKSPACE, "SOUL.md"));
+copyIfMissing(resolve(TEMPLATES, "MEMORY.md"), resolve(WORKSPACE, "MEMORY.md"));
+copyIfMissing(resolve(TEMPLATES, "PEOPLE.md"), resolve(WORKSPACE, "PEOPLE.md"));
+copyIfMissing(resolve(TEMPLATES, "JOURNAL.md"), resolve(WORKSPACE, "JOURNAL.md"));
+
+// empty json files
+for (const name of ["crons.json", "reminders.json"]) {
+  const path = resolve(WORKSPACE, "config", name);
+  if (!existsSync(path)) {
+    writeFileSync(path, "[]");
+    console.log(`created: ${path}`);
+  }
+}
+
+// --- 4. npm link ---
 console.log("\n=== Registering furet command ===");
 run("npm link");
 
-// --- 4. systemd service ---
+// --- 5. systemd service ---
 console.log("\n=== Installing systemd service ===");
 
 const nodeBinDir = dirname(process.execPath);

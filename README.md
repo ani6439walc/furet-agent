@@ -19,8 +19,9 @@ npx tsx bin/furet.ts install
 Install will:
 1. `npm install`
 2. Copy `config.example.yaml` → `config.yaml` and `.env.example` → `.env` (if not exist)
-3. `npm link` to register the global `furet` command
-4. Generate and enable a systemd service (`furet.service`)
+3. Set up `workspace/` with templates (AGENT.md, SOUL.md, MEMORY.md, PEOPLE.md, JOURNAL.md)
+4. `npm link` to register the global `furet` command
+5. Generate and enable a systemd service (`furet.service`)
 
 After install, fill in your settings:
 
@@ -66,6 +67,29 @@ Furet integrates with Google Calendar, Gmail, Drive, and Tasks.
    GOOGLE_CLIENT_SECRET=your-client-secret
    ```
 5. Restart bot, then use `/google-auth` in Discord to authorize
+
+## Workspace Structure
+
+`workspace/` is created by `furet install` and contains all runtime data:
+
+```
+workspace/
+├── AGENT.md         # System instructions (behavior, tools, boundaries)
+├── SOUL.md          # Persona (name, personality, tone)
+├── MEMORY.md        # Long-term memory index
+├── PEOPLE.md        # People directory
+├── JOURNAL.md       # Memory hook, session summarize, daily journal prompts
+├── config/          # Structured data
+│   ├── crons.json
+│   ├── reminders.json
+│   └── google-token.json
+├── memory/          # Daily memory files
+├── sessions/        # Conversation sessions
+│   └── archive/
+└── skills/          # Installed skills
+```
+
+All `.md` files are customizable — edit them to change the bot's behavior, personality, and prompts.
 
 ## Service Management
 

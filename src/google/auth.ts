@@ -1,5 +1,6 @@
 import { google } from "googleapis";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { GOOGLE_TOKEN_PATH } from "../paths.js";
 import { logger } from "../logger.js";
 
@@ -69,6 +70,7 @@ export async function exchangeCode(input: string): Promise<void> {
   const client = createOAuth2Client();
   if (!client) throw new Error("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET 未設定");
   const { tokens } = await client.getToken(code);
+  mkdirSync(dirname(GOOGLE_TOKEN_PATH), { recursive: true });
   writeFileSync(GOOGLE_TOKEN_PATH, JSON.stringify(tokens, null, 2));
   client.setCredentials(tokens);
 
