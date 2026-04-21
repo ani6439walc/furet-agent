@@ -132,10 +132,13 @@ function createBuiltinToolsExtension(options: AgentOptions): (pi: ExtensionAPI) 
     pi.on("before_agent_start", (event) => {
       const legacySystemPrompt = buildSystemPrompt(options.systemPrompt);
       const memoryLayers = buildMemoryLayersPrompt();
+
+      // Prioritize the user's original system prompt and instructions.
+      // event.systemPrompt (from pi framework) contains specific instructions for the SDK tools.
       const layeredPrompt = [
-        event.systemPrompt,
         legacySystemPrompt,
-        memoryLayers ? `## Three-layer Memory Strategy\n${memoryLayers}` : "",
+        memoryLayers ? `## Memory Context\n${memoryLayers}` : "",
+        `--- Framework Instructions ---\n${event.systemPrompt}`,
       ].filter(Boolean).join("\n\n");
 
       return { systemPrompt: layeredPrompt };

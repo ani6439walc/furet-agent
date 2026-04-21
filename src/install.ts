@@ -48,7 +48,6 @@ ensureDir(resolve(WORKSPACE, "skills"));
 
 // workspace files from templates
 copyIfMissing(resolve(TEMPLATES, "AGENT.md"), resolve(WORKSPACE, "AGENT.md"));
-copyIfMissing(resolve(TEMPLATES, "AGENT.md"), resolve(WORKSPACE, "FURET.md"));
 copyIfMissing(resolve(TEMPLATES, "SOUL.md"), resolve(WORKSPACE, "SOUL.md"));
 copyIfMissing(resolve(TEMPLATES, "MEMORY.md"), resolve(WORKSPACE, "MEMORY.md"));
 copyIfMissing(resolve(TEMPLATES, "PEOPLE.md"), resolve(WORKSPACE, "PEOPLE.md"));
