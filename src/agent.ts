@@ -155,12 +155,20 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
     }
 
     // 有 tool call → 執行，結果只進 messages（不存 session）
+    // 用 try-catch 包住每個工具，失敗時把錯誤訊息當成 tool_result 回給 AI，
+    // 讓 AI 自行決定如何繼續，而不是讓整個 ask() 直接拋出例外中斷。
     const toolResults: ContentBlock[] = [];
     for (const toolBlock of toolUseBlocks) {
       toolsUsed.push({ tool: toolBlock.name, input: toolBlock.input });
       logger.info({ tool: toolBlock.name, input: toolBlock.input }, "tool call");
       options.onToolUse?.(toolBlock.name, toolBlock.input);
-      const result = await executeTool(toolBlock.name, toolBlock.input);
+      let result: string;
+      try {
+        result = await executeTool(toolBlock.name, toolBlock.input);
+      } catch (err) {
+        result = `Error: ${(err as Error).message}`;
+        logger.warn({ tool: toolBlock.name, err: (err as Error).message }, "tool execution error (recovered)");
+      }
       logger.debug({ tool: toolBlock.name, result: result.slice(0, 500) }, "tool result");
       toolResults.push({ type: "tool_result", tool_use_id: toolBlock.id, content: result });
     }
