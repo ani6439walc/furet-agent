@@ -5,3 +5,4 @@ config.yaml
 workspace/
 logs/
 DESIGN.md
+furet.pid

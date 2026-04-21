@@ -1,4 +1,5 @@
 import { schedule, type ScheduledTask } from "node-cron";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { logger } from "./logger.js";
 import { ask } from "./agent.js";
 import { loadCrons, type CronJob } from "./tools/builtin/cron.js";
@@ -9,6 +10,7 @@ import { Session } from "./session.js";
 import { SESSION_SUMMARIZE_PROMPT, buildJournalPrompt } from "./prompt.js";
 import { loadConfig } from "./config.js";
 import { fixMarkdownLinks } from "./utils/format.js";
+import { ROOT } from "./paths.js";
 
 async function sendToChannel(channelId: string, text: string): Promise<string[]> {
   const client = getDiscordClient();
@@ -226,6 +228,25 @@ function scheduleJournal(): void {
   console.log(`Journal scheduled at ${config.journal.hour}:${String(config.journal.minute).padStart(2, "0")} daily`);
 }
 
+// --- PID file: kill old instance before starting ---
+const PID_FILE = `${ROOT}/furet.pid`;
+
+if (existsSync(PID_FILE)) {
+  const raw = readFileSync(PID_FILE, "utf-8").trim();
+  const oldPid = parseInt(raw, 10);
+  if (oldPid && oldPid !== process.pid) {
+    try {
+      process.kill(oldPid, "SIGTERM");
+      console.log(`Killed old gateway (PID ${oldPid})`);
+      logger.info({ oldPid }, "killed old gateway");
+    } catch {
+      // process already gone, ignore
+    }
+  }
+}
+
+writeFileSync(PID_FILE, String(process.pid));
+
 // --- Start ---
 console.log("Furet Gateway starting...");
 logger.info("gateway start");
@@ -247,8 +268,24 @@ if (config.discord.enabled && config.discord.token) {
 
 console.log("Furet Gateway running. Press Ctrl+C to stop.");
 
+function cleanup() {
+  try {
+    // only remove if we still own the PID file
+    if (existsSync(PID_FILE) && readFileSync(PID_FILE, "utf-8").trim() === String(process.pid)) {
+      writeFileSync(PID_FILE, "");
+    }
+  } catch {}
+}
+
 process.on("SIGINT", () => {
+  cleanup();
   console.log("\nGateway stopped.");
   logger.info("gateway stop");
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  cleanup();
+  logger.info("gateway stop (SIGTERM)");
   process.exit(0);
 });

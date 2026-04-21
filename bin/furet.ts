@@ -7,6 +7,9 @@ switch (command) {
   case "gateway":
     await import(resolve(import.meta.dirname!, "../src/gateway.ts"));
     break;
+  case "install":
+    await import(resolve(import.meta.dirname!, "../src/install.ts"));
+    break;
   default:
     await import(resolve(import.meta.dirname!, "../src/cli.ts"));
     break;
