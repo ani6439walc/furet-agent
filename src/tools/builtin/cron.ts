@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { validate } from "node-cron";
 import { logger } from "../../logger.js";
 import { CRONS_FILE } from "../../paths.js";
 import type { Tool } from "../../types.js";
@@ -37,12 +38,13 @@ export const cronCreate: Tool = {
       name: { type: "string", description: "Short name for this task" },
       schedule: { type: "string", description: "Cron expression (e.g. '0 9 * * *' for daily 9am, '*/30 * * * *' for every 30 min)" },
       prompt: { type: "string", description: "The prompt to execute when triggered" },
-      channel_id: { type: "string", description: "Discord channel ID to send the result to. If omitted, result is only logged." },
+      channel_id: { type: "string", description: "Discord channel ID to send the result to." },
     },
-    required: ["name", "schedule", "prompt"],
+    required: ["name", "schedule", "prompt", "channel_id"],
   },
   execute: async (args) => {
     const { name, schedule, prompt, channel_id } = args as { name: string; schedule: string; prompt: string; channel_id?: string };
+    if (!validate(schedule)) return `Invalid cron expression: "${schedule}"`;
     const crons = loadCrons();
     const job: CronJob = {
       id: randomUUID().slice(0, 8),
@@ -115,5 +117,43 @@ export const cronToggle: Tool = {
     saveCrons(crons);
     logger.info({ id: job.id, enabled: job.enabled }, "cron toggled");
     return `Cron "${job.name}" is now ${job.enabled ? "enabled" : "disabled"}`;
+  },
+};
+
+export const cronUpdate: Tool = {
+  name: "cron_update",
+  description: "Update an existing scheduled task. Only the provided fields will be changed; omitted fields remain unchanged.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "The cron job ID to update" },
+      name: { type: "string", description: "New short name for this task" },
+      schedule: { type: "string", description: "New cron expression" },
+      prompt: { type: "string", description: "New prompt to execute when triggered" },
+      channel_id: { type: "string", description: "New Discord channel ID to send results to." },
+    },
+    required: ["id"],
+  },
+  execute: async (args) => {
+    const { id, name, schedule, prompt, channel_id } = args as {
+      id: string;
+      name?: string;
+      schedule?: string;
+      prompt?: string;
+      channel_id?: string;
+    };
+    if (schedule !== undefined && !validate(schedule)) return `Invalid cron expression: "${schedule}"`;
+    const crons = loadCrons();
+    const job = crons.find(c => c.id === id);
+    if (!job) return `Cron job "${id}" not found.`;
+
+    if (name !== undefined) job.name = name;
+    if (schedule !== undefined) job.schedule = schedule;
+    if (prompt !== undefined) job.prompt = prompt;
+    if (channel_id !== undefined) job.channel_id = channel_id;
+
+    saveCrons(crons);
+    logger.info({ id: job.id, name: job.name }, "cron updated");
+    return `Updated cron "${job.name}" (${job.id})`;
   },
 };

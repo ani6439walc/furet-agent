@@ -5,7 +5,7 @@ import { readFileTool } from "./builtin/read-file.js";
 import { writeFileTool } from "./builtin/write-file.js";
 import { weather } from "./builtin/weather.js";
 import { memorySave, memorySearch, memoryList, memoryUpdateIndex } from "./builtin/memory.js";
-import { cronCreate, cronList, cronDelete, cronToggle } from "./builtin/cron.js";
+import { cronCreate, cronList, cronDelete, cronToggle, cronUpdate } from "./builtin/cron.js";
 import { reminderCreate, reminderList, reminderDelete } from "./builtin/reminder.js";
 import {
   discordFetchMessage, discordSendMessage, discordReact,
@@ -17,7 +17,7 @@ import {
 const tools: Tool[] = [
   bash, readFileTool, writeFileTool, weather,
   memorySave, memorySearch, memoryList, memoryUpdateIndex,
-  cronCreate, cronList, cronDelete, cronToggle,
+  cronCreate, cronList, cronDelete, cronToggle, cronUpdate,
   reminderCreate, reminderList, reminderDelete,
   discordFetchMessage, discordSendMessage, discordReact,
   discordPin, discordUnpin,
