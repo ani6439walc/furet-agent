@@ -1,7 +1,7 @@
 import { schedule, type ScheduledTask } from "node-cron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { logger } from "./logger.js";
-import { ask, getPiSessionDirectory } from "./agent.js";
+import { archivePiSession, ask, getPiSessionDirectory } from "./agent.js";
 import { loadCrons, type CronJob } from "./tools/builtin/cron.js";
 import { loadReminders, saveReminders, type Reminder } from "./tools/builtin/reminder.js";
 import { getDiscordClient } from "./tools/builtin/discord.js";
@@ -163,19 +163,6 @@ function listPiSessionIds(): string[] {
   } catch {
     return [];
   }
-}
-
-function archivePiSession(sessionId: string): void {
-  const sessionDir = getPiSessionDirectory();
-  const archiveDir = `${sessionDir}/archive`;
-  const fileName = `${encodeURIComponent(sessionId)}.jsonl`;
-  const source = `${sessionDir}/${fileName}`;
-  if (!existsSync(source)) return;
-
-  mkdirSync(archiveDir, { recursive: true });
-  const timestamp = Date.now();
-  const destination = `${archiveDir}/${encodeURIComponent(sessionId)}-${timestamp}.jsonl`;
-  renameSync(source, destination);
 }
 
 /** 總結並歸檔所有 active pi sessions */

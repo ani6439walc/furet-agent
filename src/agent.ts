@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
@@ -9,7 +9,6 @@ import {
   getAgentDir,
   ModelRegistry,
   SessionManager,
-  SessionEntry,
 } from "@mariozechner/pi-coding-agent";
 import { Type, getModels, type Model } from "@mariozechner/pi-ai";
 import { loadConfig } from "./config.js";
@@ -71,12 +70,25 @@ function migrateLegacySession(sessionId: string, jsonlPath: string): void {
 
     for (const msg of legacyMsgs) {
       if (typeof msg.content !== "string") continue;
-      const entry: SessionEntry = {
-        role: msg.role === "assistant" ? "assistant" : "user",
-        content: [{ type: "text", text: msg.content }],
-        // SDK 會自動產生 entry id, timestamp 等
-      };
-      manager.append(entry);
+      const role = msg.role === "assistant" ? "assistant" : "user";
+      if (role === "user") {
+        manager.appendMessage({
+          role: "user",
+          content: msg.content,
+          timestamp: Date.now(),
+        });
+      } else {
+        manager.appendMessage({
+          role: "assistant",
+          content: [{ type: "text", text: msg.content }],
+          api: "legacy",
+          provider: "legacy",
+          model: "legacy",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "stop",
+          timestamp: Date.now(),
+        } as any);
+      }
     }
     logger.info({ sessionId }, "migration completed");
   } catch (err) {
@@ -114,30 +126,31 @@ function resolveAnthropicModel(): Model<"anthropic-messages"> {
   };
 }
 
-function extractAssistantResult(messages: AgentMessage[]): { text: string; usage: TokenUsage } {
+function extractAssistantResult(messages: AgentMessage[], startIndex: number): { text: string; usage: TokenUsage } {
+  let text = "";
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-  for (let i = messages.length - 1; i >= 0; i--) {
+  for (let i = startIndex; i < messages.length; i++) {
     const message = messages[i];
     if (!isRecord(message) || message.role !== "assistant") continue;
     if (!Array.isArray(message.content)) continue;
 
-    const text = message.content
+    const messageText = message.content
       .filter(isTextBlock)
       .map(block => block.text)
       .join("");
 
-    if (isRecord(message.usage)) {
-      const input = typeof message.usage.input === "number" ? message.usage.input : 0;
-      const output = typeof message.usage.output === "number" ? message.usage.output : 0;
-      usage.inputTokens = input;
-      usage.outputTokens = output;
+    if (messageText) {
+      text = messageText;
     }
 
-    return { text, usage };
+    if (isRecord(message.usage)) {
+      usage.inputTokens += typeof message.usage.input === "number" ? message.usage.input : 0;
+      usage.outputTokens += typeof message.usage.output === "number" ? message.usage.output : 0;
+    }
   }
 
-  return { text: "", usage };
+  return { text, usage };
 }
 
 function createBuiltinToolsExtension(options: AgentOptions): (pi: ExtensionAPI) => void {
@@ -230,11 +243,12 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
   });
 
   let finalText = "";
+  const startIndex = session.messages.length;
   try {
     session.setActiveToolsByName(registeredTools.map(tool => tool.name));
     await session.prompt(promptText);
 
-    const result = extractAssistantResult(session.messages);
+    const result = extractAssistantResult(session.messages, startIndex);
     finalText = result.text;
     totalUsage.inputTokens += result.usage.inputTokens;
     totalUsage.outputTokens += result.usage.outputTokens;
@@ -256,4 +270,17 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
 export function getPiSessionDirectory(): string {
   mkdirSync(PI_SESSIONS_DIR, { recursive: true });
   return PI_SESSIONS_DIR;
+}
+
+export function archivePiSession(sessionId: string): void {
+  const sessionDir = getPiSessionDirectory();
+  const archiveDir = resolve(sessionDir, "archive");
+  const fileName = `${sanitizeSessionId(sessionId)}.jsonl`;
+  const source = resolve(sessionDir, fileName);
+  if (!existsSync(source)) return;
+
+  mkdirSync(archiveDir, { recursive: true });
+  const timestamp = Date.now();
+  const destination = resolve(archiveDir, `${sanitizeSessionId(sessionId)}-${timestamp}.jsonl`);
+  renameSync(source, destination);
 }
