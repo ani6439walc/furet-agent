@@ -16,7 +16,7 @@ import { normalizeMentions } from "./utils/discord-mentions.js";
 import { loadCrons } from "./tools/builtin/cron.js";
 import { getAuthClient, getAuthUrl, exchangeCode } from "./google/auth.js";
 import { loadReminders } from "./tools/builtin/reminder.js";
-import type { TokenUsage } from "./types.js";
+import type { TokenUsage, ProgressEvent } from "./types.js";
 
 // model pricing (USD per million tokens) — from Anthropic official pricing
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
@@ -379,6 +379,26 @@ async function formatIncomingMessage(message: Message): Promise<FormattedMessage
   };
 }
 
+// --- Progress message editing ---
+
+const PROGRESS_DEBOUNCE_MS = 1000;
+
+interface ProgressLine {
+  id: string;
+  label: string;
+  status: "running" | "ok" | "err";
+}
+
+function renderProgress(lines: ProgressLine[]): string {
+  if (lines.length === 0) return "...";
+  return lines
+    .map(l => {
+      const icon = l.status === "running" ? "→" : l.status === "ok" ? "✓" : "✗";
+      return `${icon} ${l.label}`;
+    })
+    .join("\n");
+}
+
 async function handleTrigger(message: Message, session: Session, images?: string[]): Promise<void> {
   logger.info({
     sessionId: session.id,
@@ -386,19 +406,58 @@ async function handleTrigger(message: Message, session: Session, images?: string
     content: message.content.slice(0, 200),
   }, "discord trigger");
 
-  if ("sendTyping" in message.channel) {
-    await message.channel.sendTyping().catch(() => {});
+  const channel = message.channel;
+
+  // 持續 typing indicator
+  const typingInterval = setInterval(() => {
+    if ("sendTyping" in channel) {
+      (channel as { sendTyping: () => Promise<void> }).sendTyping().catch(() => {});
+    }
+  }, 8000);
+  if ("sendTyping" in channel) {
+    await (channel as { sendTyping: () => Promise<void> }).sendTyping().catch(() => {});
   }
 
+  // 進度訊息狀態
+  let progressMsg: Message | undefined;
+  const progressLines: ProgressLine[] = [];
+  let lastEditAt = 0;
+
+  const flushProgress = async () => {
+    const now = Date.now();
+    if (now - lastEditAt < PROGRESS_DEBOUNCE_MS) return;
+    lastEditAt = now;
+    const body = renderProgress(progressLines);
+    try {
+      if (!progressMsg) {
+        progressMsg = await message.reply(body);
+      } else {
+        await progressMsg.edit(body);
+      }
+    } catch {
+      // 編輯失敗不影響，最終回覆才是權威
+    }
+  };
+
+  const onProgress = (event: ProgressEvent) => {
+    if (event.type === "tool_start") {
+      progressLines.push({ id: event.toolCallId, label: event.toolName, status: "running" });
+    } else {
+      const line = progressLines.find(l => l.id === event.toolCallId);
+      if (line) line.status = event.isError ? "err" : "ok";
+    }
+    void flushProgress();
+  };
+
   try {
-    const ch = message.channel;
+    const ch = channel;
     const channelType = ch.isThread()
       ? (ch.parent && "type" in ch.parent && ch.parent.type === 15 ? "forum post" : "thread")
       : (ch.isDMBased() ? "DM" : "channel");
     const parentInfo = ch.isThread() && ch.parentId ? `, parent channel: ${ch.parentId}` : "";
     const threadName = ch.isThread() ? `, name: "${ch.name}"` : "";
     const channelContext = `Current Discord context: ${channelType} (ID: ${message.channelId}${parentInfo}${threadName})`;
-    const response = await ask(null, { session, systemPrompt: channelContext, images });
+    const response = await ask(null, { session, systemPrompt: channelContext, images, onProgress });
     logger.info({
       sessionId: session.id,
       textLength: response.text?.length ?? 0,
@@ -407,6 +466,8 @@ async function handleTrigger(message: Message, session: Session, images?: string
     }, "discord agent response");
 
     if (!response.text) {
+      // 沒有文字回覆：刪掉進度訊息，加 emoji
+      if (progressMsg) await progressMsg.delete().catch(() => {});
       await message.react("🤔").catch(() => {});
       return;
     }
@@ -416,17 +477,32 @@ async function handleTrigger(message: Message, session: Session, images?: string
     const formatted = fixMarkdownLinks(stripped);
     const chunks = chunkMessage(formatted, 2000);
     const sentIds: string[] = [];
-    for (const chunk of chunks) {
-      const sent = await message.reply(chunk);
+
+    // 第一個 chunk：編輯進度訊息或發新訊息
+    if (progressMsg) {
+      await progressMsg.edit(chunks[0]).catch(() => {});
+      sentIds.push(progressMsg.id);
+    } else {
+      const sent = await message.reply(chunks[0]);
       sentIds.push(sent.id);
     }
+
+    // 剩餘 chunks：用 reply 發新訊息
+    for (let i = 1; i < chunks.length; i++) {
+      const sent = await message.reply(chunks[i]);
+      sentIds.push(sent.id);
+    }
+
     if (sentIds.length > 0) {
       session.setLastAssistantMsgId(sentIds.join(","));
     }
     logger.info({ sessionId: session.id, chunks: chunks.length, sentIds }, "discord reply sent");
   } catch (err) {
     logger.error({ err: (err as Error).message, stack: (err as Error).stack }, "discord handle trigger failed");
+    if (progressMsg) await progressMsg.delete().catch(() => {});
     await message.react("🤕").catch(() => {});
+  } finally {
+    clearInterval(typingInterval);
   }
 }
 

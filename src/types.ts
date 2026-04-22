@@ -44,10 +44,15 @@ export interface AgentResponse {
   usage: TokenUsage;
 }
 
+export type ProgressEvent =
+  | { type: "tool_start"; toolCallId: string; toolName: string }
+  | { type: "tool_end"; toolCallId: string; isError: boolean };
+
 export interface AgentOptions {
   systemPrompt?: string;
   maxTurns?: number;
   session?: import("./session.js").Session;
   onToolUse?: (tool: string, input: Record<string, unknown>) => void;
+  onProgress?: (event: ProgressEvent) => void;
   images?: string[];
 }

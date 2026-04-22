@@ -2,7 +2,7 @@ import { logger } from "./logger.js";
 import { loadConfig } from "./config.js";
 import { buildSystemPrompt, MEMORY_HOOK } from "./prompt.js";
 import { anthropicTools, executeTool } from "./tools/registry.js";
-import type { ContentBlock, Message, TokenUsage, ToolActivity, AgentResponse, AgentOptions } from "./types.js";
+import type { ContentBlock, Message, TokenUsage, ToolActivity, AgentResponse, AgentOptions, ProgressEvent } from "./types.js";
 
 /** 清除 API 回傳 content blocks 中的多餘欄位（如 caller），只保留我們定義的欄位 */
 function sanitizeContent(blocks: ContentBlock[]): ContentBlock[] {
@@ -116,19 +116,28 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
     for (const block of response.content) {
       if (block.type === "tool_use") toolUseBlocks.push(block);
       if (block.type === "web_search_tool_result") {
+        const ssId = `server_web_search_${Date.now()}`;
         toolsUsed.push({ tool: "web_search", input: {} });
         logger.info("server-side web_search used");
         options.onToolUse?.("web_search", {});
+        options.onProgress?.({ type: "tool_start", toolCallId: ssId, toolName: "web_search" });
+        options.onProgress?.({ type: "tool_end", toolCallId: ssId, isError: false });
       }
       if ((block as Record<string, unknown>).type === "web_fetch_tool_result") {
+        const ssId = `server_web_fetch_${Date.now()}`;
         toolsUsed.push({ tool: "web_fetch", input: {} });
         logger.info("server-side web_fetch used");
         options.onToolUse?.("web_fetch", {});
+        options.onProgress?.({ type: "tool_start", toolCallId: ssId, toolName: "web_fetch" });
+        options.onProgress?.({ type: "tool_end", toolCallId: ssId, isError: false });
       }
       if ((block as Record<string, unknown>).type === "code_execution_tool_result") {
+        const ssId = `server_code_exec_${Date.now()}`;
         toolsUsed.push({ tool: "code_execution", input: {} });
         logger.info("server-side code_execution used");
         options.onToolUse?.("code_execution", {});
+        options.onProgress?.({ type: "tool_start", toolCallId: ssId, toolName: "code_execution" });
+        options.onProgress?.({ type: "tool_end", toolCallId: ssId, isError: false });
       }
     }
 
@@ -162,13 +171,17 @@ export async function ask(prompt: string | null, options: AgentOptions = {}): Pr
       toolsUsed.push({ tool: toolBlock.name, input: toolBlock.input });
       logger.info({ tool: toolBlock.name, input: toolBlock.input }, "tool call");
       options.onToolUse?.(toolBlock.name, toolBlock.input);
+      options.onProgress?.({ type: "tool_start", toolCallId: toolBlock.id, toolName: toolBlock.name });
       let result: string;
+      let isError = false;
       try {
         result = await executeTool(toolBlock.name, toolBlock.input);
       } catch (err) {
         result = `Error: ${(err as Error).message}`;
+        isError = true;
         logger.warn({ tool: toolBlock.name, err: (err as Error).message }, "tool execution error (recovered)");
       }
+      options.onProgress?.({ type: "tool_end", toolCallId: toolBlock.id, isError });
       logger.debug({ tool: toolBlock.name, result: result.slice(0, 500) }, "tool result");
       toolResults.push({ type: "tool_result", tool_use_id: toolBlock.id, content: result });
     }
