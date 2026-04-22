@@ -15,6 +15,7 @@ import { normalizeMentions } from "./utils/discord-mentions.js";
 
 import { loadCrons } from "./tools/builtin/cron.js";
 import { getAuthClient, getAuthUrl, exchangeCode } from "./google/auth.js";
+import { google } from "googleapis";
 import { loadReminders } from "./tools/builtin/reminder.js";
 import type { TokenUsage, ProgressEvent } from "./types.js";
 
@@ -66,6 +67,10 @@ const SLASH_COMMANDS = [
     .addStringOption(opt =>
       opt.setName("callback").setDescription("授權後的 redirect 網址").setRequired(false)
     )
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("task")
+    .setDescription("列出 Google Tasks 待辦事項")
     .toJSON(),
 ];
 
@@ -273,6 +278,40 @@ export async function startBot(token: string): Promise<void> {
         } catch (err) {
           await interaction.reply({ content: `授權失敗：${(err as Error).message}`, flags: MessageFlags.Ephemeral });
         }
+      }
+    }
+
+    if (interaction.commandName === "task") {
+      const auth = getAuthClient();
+      if (!auth) {
+        await interaction.reply({ content: "Google API 未授權，請先用 /google-auth 授權。", flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        const tasks = google.tasks({ version: "v1", auth });
+        const res = await tasks.tasks.list({
+          tasklist: "@default",
+          maxResults: 20,
+          showCompleted: false,
+          showHidden: false,
+        });
+        const items = res.data.items || [];
+        if (items.length === 0) {
+          await interaction.editReply("沒有待辦事項 🎉");
+          return;
+        }
+        const lines = items.map(t => {
+          const due = t.due ? ` (${t.due.split("T")[0]})` : "";
+          return `• ${t.title}${due}`;
+        });
+        const embed = new EmbedBuilder()
+          .setTitle("Google Tasks")
+          .setDescription(lines.join("\n"))
+          .setTimestamp();
+        await interaction.editReply({ embeds: [embed] });
+      } catch (err) {
+        await interaction.editReply(`取得 Tasks 失敗：${(err as Error).message}`);
       }
     }
   });
