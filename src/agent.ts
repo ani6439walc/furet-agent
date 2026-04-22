@@ -90,7 +90,8 @@ function migrateLegacySession(sessionId: string, jsonlPath: string): void {
         } as any);
       }
     }
-    logger.info({ sessionId }, "migration completed");
+    renameSync(legacyPath, legacyPath + ".migrated");
+    logger.info({ sessionId }, "migration completed and legacy session renamed");
   } catch (err) {
     logger.warn({ sessionId, err: (err as Error).message }, "failed to migrate legacy session");
   }
